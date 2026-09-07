@@ -90,9 +90,15 @@ function DashcamPage() {
     detections: [],
     status: "idle",
     model: "URBAN-INTEL EDGE-VISION",
+    meanConfidence: 0,
+    frameSuccessRate: 0,
+    framesSampled: 0,
+    detectionsScored: 0,
   });
   const [captures, setCaptures] = useState<CaptureEvent[]>([]);
+  const [reviews, setReviews] = useState<Record<string, "correct" | "wrong">>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
   const [geo, setGeo] = useState<{ lat: number; lng: number; live: boolean; accuracy?: number }>({
     lat: CITY_CENTER[0],
     lng: CITY_CENTER[1],
@@ -183,6 +189,21 @@ function DashcamPage() {
     () => stats.detections.filter((d) => d.confidence >= threshold),
     [stats.detections, threshold],
   );
+
+  // Live perception quality: model confidence weighted by how many sampled frames it read.
+  const liveQuality = useMemo(() => {
+    if (!stats.framesSampled || !stats.detectionsScored) return null;
+    return (stats.meanConfidence * stats.frameSuccessRate) / 100;
+  }, [stats.framesSampled, stats.detectionsScored, stats.meanConfidence, stats.frameSuccessRate]);
+
+  // Verified accuracy: reviewer-confirmed correct rate over reviewed captures.
+  const verified = useMemo(() => {
+    const marks = Object.values(reviews);
+    if (!marks.length) return null;
+    const correct = marks.filter((m) => m === "correct").length;
+    return { rate: (correct / marks.length) * 100, reviewed: marks.length, correct };
+  }, [reviews]);
+
 
   const vehicleCounts = useMemo(() => {
     const base: Record<VehicleClass, number> = { car: 0, bus: 0, truck: 0, two_wheeler: 0 };
@@ -374,7 +395,19 @@ function DashcamPage() {
                 <div className="text-zinc-300">
                   {stats.fps.toFixed(1)} FPS RENDER · {stats.model}
                 </div>
+                <div className="text-amber-400">
+                  ACCURACY:{" "}
+                  {liveQuality === null ? "CALIBRATING" : `${liveQuality.toFixed(1)}% LIVE`}
+                  {" · "}
+                  {verified
+                    ? `${verified.rate.toFixed(1)}% VERIFIED (${verified.reviewed})`
+                    : "0 REVIEWED"}
+                </div>
+                <div className="text-zinc-500">
+                  FRAMES READ {stats.frameSuccessRate.toFixed(0)}% OF {stats.framesSampled}
+                </div>
                 <div className="text-zinc-500">THRESH {threshold}% · OBJECTS {visible.length}</div>
+
               </div>
 
               {/* Live tallies */}
@@ -493,7 +526,7 @@ function DashcamPage() {
           <Panel>
             <PanelHeader
               title="Captured Incidents & Event History"
-              meta={`${captures.length} auto-captured snapshots · tap to load into dispatch`}
+              meta={`${captures.length} snapshots · mark each read correct or wrong to build the verified accuracy score`}
             />
             <div className="flex gap-3 overflow-x-auto px-4 py-4">
               {captures.length === 0 ? (
@@ -503,10 +536,10 @@ function DashcamPage() {
               ) : (
                 captures.map((c) => {
                   const meta = HAZARD_META[c.kind];
+                  const mark = reviews[c.id];
                   return (
-                    <button
+                    <div
                       key={c.id}
-                      onClick={() => setSelectedId(c.id)}
                       className={cn(
                         "w-52 shrink-0 overflow-hidden rounded-lg border bg-zinc-950/60 text-left transition-colors",
                         selected?.id === c.id
@@ -514,36 +547,65 @@ function DashcamPage() {
                           : "border-zinc-800 hover:border-zinc-700",
                       )}
                     >
-                      <img
-                        src={c.image}
-                        alt={`${meta.label} snapshot`}
-                        width={208}
-                        height={117}
-                        loading="lazy"
-                        className="h-28 w-full object-cover"
-                      />
-                      <div className="space-y-1 p-2">
-                        <AccentBadge accent={meta.accent}>{meta.alertType}</AccentBadge>
-                        <p className="font-mono text-[10px] text-zinc-400">
-                          {formatCoord(c.lat, c.lng)}
-                        </p>
-                        <p className="font-mono text-[10px] text-zinc-500">
-                          {istStamp(new Date(c.at))}
-                        </p>
-                        <p
+                      <button onClick={() => setSelectedId(c.id)} className="block w-full text-left">
+                        <img
+                          src={c.image}
+                          alt={`${meta.label} snapshot`}
+                          width={208}
+                          height={117}
+                          loading="lazy"
+                          className="h-28 w-full object-cover"
+                        />
+                        <div className="space-y-1 p-2">
+                          <AccentBadge accent={meta.accent}>{meta.alertType}</AccentBadge>
+                          <p className="font-mono text-[10px] text-zinc-400">
+                            {formatCoord(c.lat, c.lng)}
+                          </p>
+                          <p className="font-mono text-[10px] text-zinc-500">
+                            {istStamp(new Date(c.at))}
+                          </p>
+                          <p
+                            className={cn(
+                              "font-mono text-[10px]",
+                              ACCENT_CLASSES[meta.accent].text,
+                            )}
+                          >
+                            conf {c.confidence.toFixed(1)}%{c.plate ? ` · ${c.plate}` : ""}
+                          </p>
+                        </div>
+                      </button>
+                      <div className="flex gap-1 border-t border-zinc-800/70 p-2">
+                        <button
+                          onClick={() =>
+                            setReviews((prev) => ({ ...prev, [c.id]: "correct" }))
+                          }
                           className={cn(
-                            "font-mono text-[10px]",
-                            ACCENT_CLASSES[meta.accent].text,
+                            "flex-1 rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                            mark === "correct"
+                              ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-400"
+                              : "border-zinc-800 text-zinc-500 hover:text-zinc-300",
                           )}
                         >
-                          conf {c.confidence.toFixed(1)}%{c.plate ? ` · ${c.plate}` : ""}
-                        </p>
+                          Correct
+                        </button>
+                        <button
+                          onClick={() => setReviews((prev) => ({ ...prev, [c.id]: "wrong" }))}
+                          className={cn(
+                            "flex-1 rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                            mark === "wrong"
+                              ? "border-rose-500/60 bg-rose-500/10 text-rose-500"
+                              : "border-zinc-800 text-zinc-500 hover:text-zinc-300",
+                          )}
+                        >
+                          Wrong
+                        </button>
                       </div>
-                    </button>
+                    </div>
                   );
                 })
               )}
             </div>
+
           </Panel>
         </div>
 
@@ -627,6 +689,19 @@ function DashcamPage() {
                 { k: "GPS accuracy", v: geo.accuracy ? `±${geo.accuracy.toFixed(0)} m` : "FALLBACK", i: MapPin },
                 { k: "Inference", v: `${stats.latencyMs.toFixed(1)} ms`, i: Activity },
                 { k: "Frame rate", v: `${stats.fps.toFixed(1)} fps`, i: Gauge },
+                {
+                  k: "Live accuracy",
+                  v: liveQuality === null ? "calibrating" : `${liveQuality.toFixed(1)}%`,
+                  i: Gauge,
+                },
+                {
+                  k: "Verified accuracy",
+                  v: verified
+                    ? `${verified.rate.toFixed(1)}% (${verified.correct}/${verified.reviewed})`
+                    : "no reviews yet",
+                  i: Activity,
+                },
+
                 { k: "Dispatch route", v: `${dialCode} ${phone || "—"}`, i: Smartphone },
               ].map((row) => (
                 <div key={row.k} className="flex items-center gap-3 px-4 py-2.5">

@@ -26,7 +26,13 @@ export interface EngineStats {
   model: string;
   error?: string;
   scene?: string;
+  /** Rolling perception-quality metrics measured from real inference runs. */
+  meanConfidence: number; // 0-100, average confidence of accepted detections
+  frameSuccessRate: number; // 0-100, share of sampled frames the model read
+  framesSampled: number;
+  detectionsScored: number;
 }
+
 
 interface Props {
   active: boolean;
@@ -212,6 +218,11 @@ export function Viewfinder({
     let status: EngineStats["status"] = "warming";
     let error: string | undefined;
     let scene: string | undefined;
+    let framesSampled = 0;
+    let framesRead = 0;
+    let confSum = 0;
+    let confCount = 0;
+
     const pendingCaptures: SimDetection[] = [];
     const seen = new Set<string>();
 
@@ -253,6 +264,7 @@ export function Viewfinder({
         grabCtx.drawImage(v, (grab.width - dw) / 2, (grab.height - dh) / 2, dw, dh);
 
         const started = performance.now();
+        framesSampled += 1;
         try {
           const res = await analyzeFrame({
             data: {
@@ -276,9 +288,17 @@ export function Viewfinder({
           status = "live";
           error = undefined;
           scene = res.scene ?? undefined;
+          framesRead += 1;
           const now = Date.now();
           const next = res.detections.map((d) => toDetection(d, now));
           detectionsRef.current = next;
+          for (const d of next) {
+            if (d.confidence >= thresholdRef.current) {
+              confSum += d.confidence;
+              confCount += 1;
+            }
+          }
+
 
           for (const d of next) {
             const meta = HAZARD_META[d.kind];
@@ -346,9 +366,14 @@ export function Viewfinder({
           detections: detectionsRef.current,
           status,
           model: VISION_MODEL_LABEL,
+          meanConfidence: confCount ? confSum / confCount : 0,
+          frameSuccessRate: framesSampled ? (framesRead / framesSampled) * 100 : 0,
+          framesSampled,
+          detectionsScored: confCount,
           ...(error ? { error } : {}),
           ...(scene ? { scene } : {}),
         });
+
       }
     };
     raf = requestAnimationFrame(loop);
