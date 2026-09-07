@@ -691,6 +691,19 @@ function DashcamPage() {
                 { k: "GPS accuracy", v: geo.accuracy ? `±${geo.accuracy.toFixed(0)} m` : "FALLBACK", i: MapPin },
                 { k: "Inference", v: `${stats.latencyMs.toFixed(1)} ms`, i: Activity },
                 { k: "Frame rate", v: `${stats.fps.toFixed(1)} fps`, i: Gauge },
+                {
+                  k: "Live accuracy",
+                  v: liveQuality === null ? "calibrating" : `${liveQuality.toFixed(1)}%`,
+                  i: Gauge,
+                },
+                {
+                  k: "Verified accuracy",
+                  v: verified
+                    ? `${verified.rate.toFixed(1)}% (${verified.correct}/${verified.reviewed})`
+                    : "no reviews yet",
+                  i: Activity,
+                },
+
                 { k: "Dispatch route", v: `${dialCode} ${phone || "—"}`, i: Smartphone },
               ].map((row) => (
                 <div key={row.k} className="flex items-center gap-3 px-4 py-2.5">
