@@ -26,7 +26,13 @@ export interface EngineStats {
   model: string;
   error?: string;
   scene?: string;
+  /** Rolling perception-quality metrics measured from real inference runs. */
+  meanConfidence: number; // 0-100, average confidence of accepted detections
+  frameSuccessRate: number; // 0-100, share of sampled frames the model read
+  framesSampled: number;
+  detectionsScored: number;
 }
+
 
 interface Props {
   active: boolean;
