@@ -606,8 +606,6 @@ function DashcamPage() {
               )}
             </div>
 
-              )}
-            </div>
           </Panel>
         </div>
 
