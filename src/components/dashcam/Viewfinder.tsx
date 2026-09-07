@@ -264,6 +264,7 @@ export function Viewfinder({
         grabCtx.drawImage(v, (grab.width - dw) / 2, (grab.height - dh) / 2, dw, dh);
 
         const started = performance.now();
+        framesSampled += 1;
         try {
           const res = await analyzeFrame({
             data: {
@@ -287,9 +288,17 @@ export function Viewfinder({
           status = "live";
           error = undefined;
           scene = res.scene ?? undefined;
+          framesRead += 1;
           const now = Date.now();
           const next = res.detections.map((d) => toDetection(d, now));
           detectionsRef.current = next;
+          for (const d of next) {
+            if (d.confidence >= thresholdRef.current) {
+              confSum += d.confidence;
+              confCount += 1;
+            }
+          }
+
 
           for (const d of next) {
             const meta = HAZARD_META[d.kind];
