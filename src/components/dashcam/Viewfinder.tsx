@@ -366,9 +366,14 @@ export function Viewfinder({
           detections: detectionsRef.current,
           status,
           model: VISION_MODEL_LABEL,
+          meanConfidence: confCount ? confSum / confCount : 0,
+          frameSuccessRate: framesSampled ? (framesRead / framesSampled) * 100 : 0,
+          framesSampled,
+          detectionsScored: confCount,
           ...(error ? { error } : {}),
           ...(scene ? { scene } : {}),
         });
+
       }
     };
     raf = requestAnimationFrame(loop);
