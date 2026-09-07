@@ -395,7 +395,19 @@ function DashcamPage() {
                 <div className="text-zinc-300">
                   {stats.fps.toFixed(1)} FPS RENDER · {stats.model}
                 </div>
+                <div className="text-amber-400">
+                  ACCURACY:{" "}
+                  {liveQuality === null ? "CALIBRATING" : `${liveQuality.toFixed(1)}% LIVE`}
+                  {" · "}
+                  {verified
+                    ? `${verified.rate.toFixed(1)}% VERIFIED (${verified.reviewed})`
+                    : "0 REVIEWED"}
+                </div>
+                <div className="text-zinc-500">
+                  FRAMES READ {stats.frameSuccessRate.toFixed(0)}% OF {stats.framesSampled}
+                </div>
                 <div className="text-zinc-500">THRESH {threshold}% · OBJECTS {visible.length}</div>
+
               </div>
 
               {/* Live tallies */}
