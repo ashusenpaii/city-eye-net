@@ -90,9 +90,15 @@ function DashcamPage() {
     detections: [],
     status: "idle",
     model: "URBAN-INTEL EDGE-VISION",
+    meanConfidence: 0,
+    frameSuccessRate: 0,
+    framesSampled: 0,
+    detectionsScored: 0,
   });
   const [captures, setCaptures] = useState<CaptureEvent[]>([]);
+  const [reviews, setReviews] = useState<Record<string, "correct" | "wrong">>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
   const [geo, setGeo] = useState<{ lat: number; lng: number; live: boolean; accuracy?: number }>({
     lat: CITY_CENTER[0],
     lng: CITY_CENTER[1],
