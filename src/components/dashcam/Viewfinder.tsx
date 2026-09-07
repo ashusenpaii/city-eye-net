@@ -218,6 +218,11 @@ export function Viewfinder({
     let status: EngineStats["status"] = "warming";
     let error: string | undefined;
     let scene: string | undefined;
+    let framesSampled = 0;
+    let framesRead = 0;
+    let confSum = 0;
+    let confCount = 0;
+
     const pendingCaptures: SimDetection[] = [];
     const seen = new Set<string>();
 
