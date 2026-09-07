@@ -190,6 +190,21 @@ function DashcamPage() {
     [stats.detections, threshold],
   );
 
+  // Live perception quality: model confidence weighted by how many sampled frames it read.
+  const liveQuality = useMemo(() => {
+    if (!stats.framesSampled || !stats.detectionsScored) return null;
+    return (stats.meanConfidence * stats.frameSuccessRate) / 100;
+  }, [stats.framesSampled, stats.detectionsScored, stats.meanConfidence, stats.frameSuccessRate]);
+
+  // Verified accuracy: reviewer-confirmed correct rate over reviewed captures.
+  const verified = useMemo(() => {
+    const marks = Object.values(reviews);
+    if (!marks.length) return null;
+    const correct = marks.filter((m) => m === "correct").length;
+    return { rate: (correct / marks.length) * 100, reviewed: marks.length, correct };
+  }, [reviews]);
+
+
   const vehicleCounts = useMemo(() => {
     const base: Record<VehicleClass, number> = { car: 0, bus: 0, truck: 0, two_wheeler: 0 };
     for (const d of visible) if (d.kind === "vehicle" && d.vehicleClass) base[d.vehicleClass] += 1;
