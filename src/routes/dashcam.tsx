@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 import { AccentBadge, Panel, PanelHeader, glass } from "@/components/hud/panel";
 import { Viewfinder, type CaptureEvent, type EngineStats } from "@/components/dashcam/Viewfinder";
+import { sendWhatsAppAlert } from "@/lib/alerts.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -760,7 +761,23 @@ function DashcamPage() {
                   i: Activity,
                 },
 
-                { k: "Dispatch route", v: `${dialCode} ${phone || "—"}`, i: Smartphone },
+                {
+                  k: "Officer route",
+                  v: phone ? `${dialCode} ${phone}` : "not set",
+                  i: Smartphone,
+                },
+                {
+                  k: "Alert channel",
+                  v:
+                    channel === "whatsapp"
+                      ? "WHATSAPP LIVE"
+                      : channel === "failed"
+                        ? "WHATSAPP REJECTED"
+                        : channel === "unconfigured"
+                          ? "OPERATOR SEND ONLY"
+                          : "WHATSAPP · STANDBY",
+                  i: MessageSquare,
+                },
               ].map((row) => (
                 <div key={row.k} className="flex items-center gap-3 px-4 py-2.5">
                   <row.i className="size-3.5 text-zinc-500" />
