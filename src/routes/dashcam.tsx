@@ -240,11 +240,44 @@ function DashcamPage() {
     ].join("\n");
   }, [selected, geo.lat, geo.lng, clock]);
 
+  const officerNumber = `${dialCode}${phone.replace(/\D/g, "")}`;
+
+  const transmit = useCallback(
+    async (text: string, label: string) => {
+      if (phone.replace(/\D/g, "").length < 6) {
+        toast.error("Add the command officer's WhatsApp number first");
+        return;
+      }
+      setSending(true);
+      try {
+        const res = await sendWhatsAppAlert({ data: { to: officerNumber, body: text } });
+        if (res.ok) {
+          setChannel("whatsapp");
+          toast.success(`${label} delivered on WhatsApp`, {
+            description: `${officerNumber} · ${istStamp()}`,
+          });
+        } else {
+          setChannel(res.configured ? "failed" : "unconfigured");
+          toast.error(
+            res.configured ? "WhatsApp delivery failed" : "WhatsApp Business account not connected",
+            { description: res.error },
+          );
+        }
+      } catch (err) {
+        setChannel("failed");
+        toast.error("WhatsApp delivery failed", {
+          description: err instanceof Error ? err.message : "Network error",
+        });
+      } finally {
+        setSending(false);
+      }
+    },
+    [officerNumber, phone],
+  );
+
   const dispatch = useCallback(() => {
-    toast.success("Alert Transmitted to Central Command & Target Phone", {
-      description: `${dialCode} ${phone} · ${istStamp()}`,
-    });
-  }, [dialCode, phone]);
+    void transmit(payload, "Command alert");
+  }, [transmit, payload]);
 
   // Instant Alert Mode auto-dispatches new critical captures.
   useEffect(() => {
@@ -253,12 +286,10 @@ function DashcamPage() {
     if (!latest || lastDispatchRef.current === latest.id) return;
     if (HAZARD_META[latest.kind].group !== "critical") return;
     lastDispatchRef.current = latest.id;
-    toast.error("Instant Alert dispatched", {
-      description: `${HAZARD_META[latest.kind].alertType} · ${latest.plate ?? "no plate"} → ${dialCode} ${phone}`,
-    });
-  }, [captures, instant, dialCode, phone]);
+    void transmit(payload, `Instant alert · ${HAZARD_META[latest.kind].alertType}`);
+  }, [captures, instant, transmit, payload]);
 
-  const smsHref = `sms:${dialCode}${phone.replace(/\D/g, "")}?body=${encodeURIComponent(payload)}`;
+  const waHref = `https://wa.me/${officerNumber.replace(/\D/g, "")}?text=${encodeURIComponent(payload)}`;
 
   return (
     <div className="space-y-4 p-4 lg:p-6">
