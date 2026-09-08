@@ -658,11 +658,11 @@ function DashcamPage() {
         {/* Dispatch panel */}
         <div className="space-y-4">
           <Panel>
-            <PanelHeader title="Central Command Dispatch" meta="sms + command payload routing" />
+            <PanelHeader title="Central Command Dispatch" meta="whatsapp business routing" />
             <div className="space-y-4 p-4">
               <div>
                 <Label className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
-                  Target alert number
+                  Command officer whatsapp number
                 </Label>
                 <div className="mt-2 flex gap-2">
                   <Select value={dialCode} onValueChange={setDialCode}>
@@ -711,18 +711,30 @@ function DashcamPage() {
               </div>
 
               <div className="space-y-2">
-                <Button className="w-full gap-2" onClick={dispatch}>
-                  <Send className="size-4" /> Send Alert to Command &amp; SMS
+                <Button className="w-full gap-2" onClick={dispatch} disabled={sending}>
+                  <Send className="size-4" />
+                  {sending ? "Transmitting…" : "Send WhatsApp Alert to Officer"}
                 </Button>
                 <Button
                   asChild
                   variant="outline"
                   className="w-full gap-2 border-zinc-700 bg-zinc-950/60 text-zinc-200 hover:bg-zinc-900 hover:text-zinc-50"
                 >
-                  <a href={smsHref}>
-                    <MessageSquare className="size-4" /> Direct Mobile SMS Deep-Link
+                  <a href={waHref} target="_blank" rel="noreferrer">
+                    <MessageSquare className="size-4" /> Open in WhatsApp (operator send)
                   </a>
                 </Button>
+                {channel === "unconfigured" && (
+                  <p className="font-mono text-[10px] leading-relaxed text-amber-400">
+                    server sending is offline · connect a whatsapp business account to auto-transmit;
+                    use the operator send above meanwhile
+                  </p>
+                )}
+                {channel === "failed" && (
+                  <p className="font-mono text-[10px] text-rose-400">
+                    last transmission rejected · check the officer number and business sender
+                  </p>
+                )}
               </div>
             </div>
           </Panel>
