@@ -105,11 +105,26 @@ function DashcamPage() {
     live: false,
   });
   const [dialCode, setDialCode] = useState("+91");
-  const [phone, setPhone] = useState("9876543210");
+  const [phone, setPhone] = useState("");
   const [instant, setInstant] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [channel, setChannel] = useState<"idle" | "whatsapp" | "unconfigured" | "failed">("idle");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastDispatchRef = useRef<string | null>(null);
   const [clock, setClock] = useState<Date | null>(null);
+
+  // Command officer number persists on the device so operators set it once.
+  useEffect(() => {
+    const saved = localStorage.getItem("urban-intel:officer");
+    if (!saved) return;
+    const parsed = JSON.parse(saved) as { dialCode?: string; phone?: string };
+    if (parsed.dialCode) setDialCode(parsed.dialCode);
+    if (parsed.phone) setPhone(parsed.phone);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("urban-intel:officer", JSON.stringify({ dialCode, phone }));
+  }, [dialCode, phone]);
 
   useEffect(() => {
     setClock(new Date());
