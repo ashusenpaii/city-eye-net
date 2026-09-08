@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 import { AccentBadge, Panel, PanelHeader, glass } from "@/components/hud/panel";
 import { Viewfinder, type CaptureEvent, type EngineStats } from "@/components/dashcam/Viewfinder";
+import { sendWhatsAppAlert } from "@/lib/alerts.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,11 +106,26 @@ function DashcamPage() {
     live: false,
   });
   const [dialCode, setDialCode] = useState("+91");
-  const [phone, setPhone] = useState("9876543210");
+  const [phone, setPhone] = useState("");
   const [instant, setInstant] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [channel, setChannel] = useState<"idle" | "whatsapp" | "unconfigured" | "failed">("idle");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastDispatchRef = useRef<string | null>(null);
   const [clock, setClock] = useState<Date | null>(null);
+
+  // Command officer number persists on the device so operators set it once.
+  useEffect(() => {
+    const saved = localStorage.getItem("urban-intel:officer");
+    if (!saved) return;
+    const parsed = JSON.parse(saved) as { dialCode?: string; phone?: string };
+    if (parsed.dialCode) setDialCode(parsed.dialCode);
+    if (parsed.phone) setPhone(parsed.phone);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("urban-intel:officer", JSON.stringify({ dialCode, phone }));
+  }, [dialCode, phone]);
 
   useEffect(() => {
     setClock(new Date());
@@ -240,11 +256,44 @@ function DashcamPage() {
     ].join("\n");
   }, [selected, geo.lat, geo.lng, clock]);
 
+  const officerNumber = `${dialCode}${phone.replace(/\D/g, "")}`;
+
+  const transmit = useCallback(
+    async (text: string, label: string) => {
+      if (phone.replace(/\D/g, "").length < 6) {
+        toast.error("Add the command officer's WhatsApp number first");
+        return;
+      }
+      setSending(true);
+      try {
+        const res = await sendWhatsAppAlert({ data: { to: officerNumber, body: text } });
+        if (res.ok) {
+          setChannel("whatsapp");
+          toast.success(`${label} delivered on WhatsApp`, {
+            description: `${officerNumber} · ${istStamp()}`,
+          });
+        } else {
+          setChannel(res.configured ? "failed" : "unconfigured");
+          toast.error(
+            res.configured ? "WhatsApp delivery failed" : "WhatsApp Business account not connected",
+            { description: res.error },
+          );
+        }
+      } catch (err) {
+        setChannel("failed");
+        toast.error("WhatsApp delivery failed", {
+          description: err instanceof Error ? err.message : "Network error",
+        });
+      } finally {
+        setSending(false);
+      }
+    },
+    [officerNumber, phone],
+  );
+
   const dispatch = useCallback(() => {
-    toast.success("Alert Transmitted to Central Command & Target Phone", {
-      description: `${dialCode} ${phone} · ${istStamp()}`,
-    });
-  }, [dialCode, phone]);
+    void transmit(payload, "Command alert");
+  }, [transmit, payload]);
 
   // Instant Alert Mode auto-dispatches new critical captures.
   useEffect(() => {
@@ -253,12 +302,10 @@ function DashcamPage() {
     if (!latest || lastDispatchRef.current === latest.id) return;
     if (HAZARD_META[latest.kind].group !== "critical") return;
     lastDispatchRef.current = latest.id;
-    toast.error("Instant Alert dispatched", {
-      description: `${HAZARD_META[latest.kind].alertType} · ${latest.plate ?? "no plate"} → ${dialCode} ${phone}`,
-    });
-  }, [captures, instant, dialCode, phone]);
+    void transmit(payload, `Instant alert · ${HAZARD_META[latest.kind].alertType}`);
+  }, [captures, instant, transmit, payload]);
 
-  const smsHref = `sms:${dialCode}${phone.replace(/\D/g, "")}?body=${encodeURIComponent(payload)}`;
+  const waHref = `https://wa.me/${officerNumber.replace(/\D/g, "")}?text=${encodeURIComponent(payload)}`;
 
   return (
     <div className="space-y-4 p-4 lg:p-6">
@@ -612,11 +659,11 @@ function DashcamPage() {
         {/* Dispatch panel */}
         <div className="space-y-4">
           <Panel>
-            <PanelHeader title="Central Command Dispatch" meta="sms + command payload routing" />
+            <PanelHeader title="Central Command Dispatch" meta="whatsapp business routing" />
             <div className="space-y-4 p-4">
               <div>
                 <Label className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
-                  Target alert number
+                  Command officer whatsapp number
                 </Label>
                 <div className="mt-2 flex gap-2">
                   <Select value={dialCode} onValueChange={setDialCode}>
@@ -665,18 +712,30 @@ function DashcamPage() {
               </div>
 
               <div className="space-y-2">
-                <Button className="w-full gap-2" onClick={dispatch}>
-                  <Send className="size-4" /> Send Alert to Command &amp; SMS
+                <Button className="w-full gap-2" onClick={dispatch} disabled={sending}>
+                  <Send className="size-4" />
+                  {sending ? "Transmitting…" : "Send WhatsApp Alert to Officer"}
                 </Button>
                 <Button
                   asChild
                   variant="outline"
                   className="w-full gap-2 border-zinc-700 bg-zinc-950/60 text-zinc-200 hover:bg-zinc-900 hover:text-zinc-50"
                 >
-                  <a href={smsHref}>
-                    <MessageSquare className="size-4" /> Direct Mobile SMS Deep-Link
+                  <a href={waHref} target="_blank" rel="noreferrer">
+                    <MessageSquare className="size-4" /> Open in WhatsApp (operator send)
                   </a>
                 </Button>
+                {channel === "unconfigured" && (
+                  <p className="font-mono text-[10px] leading-relaxed text-amber-400">
+                    server sending is offline · connect a whatsapp business account to auto-transmit;
+                    use the operator send above meanwhile
+                  </p>
+                )}
+                {channel === "failed" && (
+                  <p className="font-mono text-[10px] text-rose-400">
+                    last transmission rejected · check the officer number and business sender
+                  </p>
+                )}
               </div>
             </div>
           </Panel>
@@ -702,7 +761,23 @@ function DashcamPage() {
                   i: Activity,
                 },
 
-                { k: "Dispatch route", v: `${dialCode} ${phone || "—"}`, i: Smartphone },
+                {
+                  k: "Officer route",
+                  v: phone ? `${dialCode} ${phone}` : "not set",
+                  i: Smartphone,
+                },
+                {
+                  k: "Alert channel",
+                  v:
+                    channel === "whatsapp"
+                      ? "WHATSAPP LIVE"
+                      : channel === "failed"
+                        ? "WHATSAPP REJECTED"
+                        : channel === "unconfigured"
+                          ? "OPERATOR SEND ONLY"
+                          : "WHATSAPP · STANDBY",
+                  i: MessageSquare,
+                },
               ].map((row) => (
                 <div key={row.k} className="flex items-center gap-3 px-4 py-2.5">
                   <row.i className="size-3.5 text-zinc-500" />
