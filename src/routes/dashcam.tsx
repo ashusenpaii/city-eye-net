@@ -79,8 +79,10 @@ const TAB =
 
 function DashcamPage() {
   const [mode, setMode] = useState<"live" | "upload">("live");
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [camError, setCamError] = useState<string | null>(null);
+  const cam = useEdgeCamera(mode === "live");
+  const stream = cam.stream;
+  const camError = cam.status.error ?? null;
+  const [targetFps, setTargetFps] = useState(0.8);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
