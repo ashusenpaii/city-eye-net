@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ACCENT_CLASSES } from "@/data/fleet";
 import { HAZARD_META, type SimDetection } from "@/lib/dashcam-engine";
-import { analyzeFrame, type FrameDetection } from "@/lib/vision.functions";
+import { EdgePipeline, type PipelineStatus } from "@/lib/edge-pipeline";
 
 export const VISION_MODEL_LABEL = "URBAN-INTEL EDGE-VISION";
 
@@ -22,7 +22,7 @@ export interface EngineStats {
   fps: number;
   latencyMs: number;
   detections: SimDetection[];
-  status: "idle" | "warming" | "live" | "error";
+  status: PipelineStatus;
   model: string;
   error?: string;
   scene?: string;
@@ -33,12 +33,13 @@ export interface EngineStats {
   detectionsScored: number;
 }
 
-
 interface Props {
   active: boolean;
   stream: MediaStream | null;
   fileUrl: string | null;
   threshold: number;
+  /** Inference passes per second requested from the edge pipeline. */
+  targetFps?: number;
   lat: number;
   lng: number;
   onStats: (s: EngineStats) => void;
@@ -47,43 +48,15 @@ interface Props {
 
 const W = 1280;
 const H = 720;
-
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-let detSeq = 0;
-
-function clamp01(n: number) {
-  return Math.min(1, Math.max(0, n));
-}
-
-/** Maps a model detection onto the renderer's detection shape. */
-function toDetection(d: FrameDetection, now: number): SimDetection {
-  detSeq += 1;
-  const meta = HAZARD_META[d.kind];
-  const x = clamp01(d.box.x);
-  const y = clamp01(d.box.y);
-  return {
-    id: `det-${now.toString(36)}-${detSeq}`,
-    kind: d.kind,
-    ...(d.vehicle_class ? { vehicleClass: d.vehicle_class } : {}),
-    box: { x, y, w: clamp01(d.box.w) || 0.05, h: clamp01(d.box.h) || 0.05 },
-    vx: 0,
-    vy: 0,
-    confidence: Math.min(100, Math.max(0, d.confidence)),
-    ...(d.plate ? { plate: d.plate.toUpperCase().replace(/\s+/g, "") } : {}),
-    ...(typeof d.speed_kph === "number" ? { speedKph: Math.round(d.speed_kph) } : {}),
-    ttl: 999,
-    born: now,
-    ...(meta.group === "critical" ? { reticle: true } : {}),
-  };
-}
-
+const SAMPLE_W = 768;
+const SAMPLE_H = 432;
 
 export function Viewfinder({
   active,
   stream,
   fileUrl,
   threshold,
+  targetFps = 0.83,
   lat,
   lng,
   onStats,
@@ -93,12 +66,14 @@ export function Viewfinder({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detectionsRef = useRef<SimDetection[]>([]);
   const thresholdRef = useRef(threshold);
+  const targetFpsRef = useRef(targetFps);
   const geoRef = useRef({ lat, lng });
   const onStatsRef = useRef(onStats);
   const onCaptureRef = useRef(onCapture);
   const [ready, setReady] = useState(false);
 
   thresholdRef.current = threshold;
+  targetFpsRef.current = targetFps;
   geoRef.current = { lat, lng };
   onStatsRef.current = onStats;
   onCaptureRef.current = onCapture;
@@ -201,7 +176,7 @@ export function Viewfinder({
     }
   }, []);
 
-  // Real inference + render loop
+  // Edge pipeline + render loop
   useEffect(() => {
     if (!active) return;
     const canvas = canvasRef.current;
@@ -209,26 +184,26 @@ export function Viewfinder({
     if (!canvas || !ctx) return;
 
     let raf = 0;
-    let cancelled = false;
     let frames = 0;
     let lastFpsAt = performance.now();
     let fps = 30;
     let sincePush = 0;
-    let inferenceMs = 0;
-    let status: EngineStats["status"] = "warming";
-    let error: string | undefined;
-    let scene: string | undefined;
-    let framesSampled = 0;
-    let framesRead = 0;
-    let confSum = 0;
-    let confCount = 0;
+    let latest = {
+      status: "warming" as PipelineStatus,
+      latencyMs: 0,
+      error: undefined as string | undefined,
+      scene: undefined as string | undefined,
+      meanConfidence: 0,
+      frameSuccessRate: 0,
+      framesSampled: 0,
+      detectionsScored: 0,
+    };
 
     const pendingCaptures: SimDetection[] = [];
-    const seen = new Set<string>();
 
     const grab = document.createElement("canvas");
-    grab.width = 768;
-    grab.height = 432;
+    grab.width = SAMPLE_W;
+    grab.height = SAMPLE_H;
     const grabCtx = grab.getContext("2d");
 
     const capture = (d: SimDetection) => {
@@ -248,81 +223,40 @@ export function Viewfinder({
       });
     };
 
-    // ---- perception loop: sample a frame, run it through the edge model ----
-    const runInference = async () => {
-      while (!cancelled) {
+    const pipeline = new EdgePipeline({
+      grab: () => {
         const v = videoRef.current;
-        if (!grabCtx || !v || v.readyState < 2 || !v.videoWidth) {
-          await wait(600);
-          continue;
-        }
+        if (!grabCtx || !v || v.readyState < 2 || !v.videoWidth) return null;
         const scale = Math.max(grab.width / v.videoWidth, grab.height / v.videoHeight);
         const dw = v.videoWidth * scale;
         const dh = v.videoHeight * scale;
         grabCtx.fillStyle = "#000";
         grabCtx.fillRect(0, 0, grab.width, grab.height);
         grabCtx.drawImage(v, (grab.width - dw) / 2, (grab.height - dh) / 2, dw, dh);
-
-        const started = performance.now();
-        framesSampled += 1;
-        try {
-          const res = await analyzeFrame({
-            data: {
-              image: grab.toDataURL("image/jpeg", 0.72),
-              threshold: thresholdRef.current,
-              width: grab.width,
-              height: grab.height,
-            },
-          });
-          if (cancelled) return;
-          inferenceMs = performance.now() - started;
-
-          if (!res.ok) {
-            status = "error";
-            error = res.error;
-            const retryable = res.status === 429 || res.status >= 500;
-            await wait(retryable ? Math.max(4000, (res.retryAfterSec ?? 5) * 1000) : 9000);
-            continue;
-          }
-
-          status = "live";
-          error = undefined;
-          scene = res.scene ?? undefined;
-          framesRead += 1;
-          const now = Date.now();
-          const next = res.detections.map((d) => toDetection(d, now));
-          detectionsRef.current = next;
-          for (const d of next) {
-            if (d.confidence >= thresholdRef.current) {
-              confSum += d.confidence;
-              confCount += 1;
-            }
-          }
-
-
-          for (const d of next) {
-            const meta = HAZARD_META[d.kind];
-            const key = `${d.kind}:${Math.round(d.box.x * 12)}:${Math.round(d.box.y * 12)}:${d.plate ?? ""}`;
-            if (
-              (meta.group === "defect" || meta.group === "critical") &&
-              d.confidence >= thresholdRef.current &&
-              !seen.has(key)
-            ) {
-              seen.add(key);
-              pendingCaptures.push(d);
-            }
-          }
-        } catch (err) {
-          if (cancelled) return;
-          status = "error";
-          error = err instanceof Error ? err.message : "Perception request failed.";
-          await wait(6000);
-          continue;
-        }
-        await wait(1200);
-      }
-    };
-    void runInference();
+        return {
+          image: grab.toDataURL("image/jpeg", 0.72),
+          width: grab.width,
+          height: grab.height,
+        };
+      },
+      threshold: () => thresholdRef.current,
+      targetFps: () => targetFpsRef.current,
+      onUpdate: (u) => {
+        if (u.status === "live") detectionsRef.current = u.detections;
+        latest = {
+          status: u.status,
+          latencyMs: u.latencyMs,
+          error: u.error,
+          scene: u.scene,
+          meanConfidence: u.meanConfidence,
+          frameSuccessRate: u.frameSuccessRate,
+          framesSampled: u.framesSampled,
+          detectionsScored: u.detectionsScored,
+        };
+        pendingCaptures.push(...u.captures);
+      },
+    });
+    pipeline.start();
 
     const loop = () => {
       raf = requestAnimationFrame(loop);
@@ -362,28 +296,26 @@ export function Viewfinder({
         sincePush = 0;
         onStatsRef.current({
           fps: Math.round(fps * 10) / 10,
-          latencyMs: Math.round(inferenceMs * 10) / 10,
+          latencyMs: Math.round(latest.latencyMs * 10) / 10,
           detections: detectionsRef.current,
-          status,
+          status: latest.status,
           model: VISION_MODEL_LABEL,
-          meanConfidence: confCount ? confSum / confCount : 0,
-          frameSuccessRate: framesSampled ? (framesRead / framesSampled) * 100 : 0,
-          framesSampled,
-          detectionsScored: confCount,
-          ...(error ? { error } : {}),
-          ...(scene ? { scene } : {}),
+          meanConfidence: latest.meanConfidence,
+          frameSuccessRate: latest.frameSuccessRate,
+          framesSampled: latest.framesSampled,
+          detectionsScored: latest.detectionsScored,
+          ...(latest.error ? { error: latest.error } : {}),
+          ...(latest.scene ? { scene: latest.scene } : {}),
         });
-
       }
     };
     raf = requestAnimationFrame(loop);
     return () => {
-      cancelled = true;
+      pipeline.stop();
       cancelAnimationFrame(raf);
       detectionsRef.current = [];
     };
   }, [active, drawBoxes]);
-
 
   return (
     <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-950">
