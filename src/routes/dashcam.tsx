@@ -79,8 +79,10 @@ const TAB =
 
 function DashcamPage() {
   const [mode, setMode] = useState<"live" | "upload">("live");
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [camError, setCamError] = useState<string | null>(null);
+  const cam = useEdgeCamera(mode === "live");
+  const stream = cam.stream;
+  const camError = cam.status.error ?? null;
+  const [targetFps, setTargetFps] = useState(0.8);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -150,33 +152,6 @@ function DashcamPage() {
     return () => navigator.geolocation.clearWatch(id);
   }, []);
 
-  // Live camera
-  useEffect(() => {
-    if (mode !== "live") return;
-    let cancelled = false;
-    let local: MediaStream | null = null;
-    navigator.mediaDevices
-      ?.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false })
-      .then((s) => {
-        if (cancelled) {
-          s.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        local = s;
-        setCamError(null);
-        setStream(s);
-      })
-      .catch(() =>
-        setCamError(
-          "Camera access denied or unavailable. Grant permission, or switch to uploaded footage.",
-        ),
-      );
-    return () => {
-      cancelled = true;
-      local?.getTracks().forEach((t) => t.stop());
-      setStream(null);
-    };
-  }, [mode]);
 
   const handleFile = useCallback((file: File) => {
     const ok = ACCEPTED.some((ext) => file.name.toLowerCase().endsWith(ext));
