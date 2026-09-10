@@ -152,33 +152,6 @@ function DashcamPage() {
     return () => navigator.geolocation.clearWatch(id);
   }, []);
 
-  // Live camera
-  useEffect(() => {
-    if (mode !== "live") return;
-    let cancelled = false;
-    let local: MediaStream | null = null;
-    navigator.mediaDevices
-      ?.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false })
-      .then((s) => {
-        if (cancelled) {
-          s.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        local = s;
-        setCamError(null);
-        setStream(s);
-      })
-      .catch(() =>
-        setCamError(
-          "Camera access denied or unavailable. Grant permission, or switch to uploaded footage.",
-        ),
-      );
-    return () => {
-      cancelled = true;
-      local?.getTracks().forEach((t) => t.stop());
-      setStream(null);
-    };
-  }, [mode]);
 
   const handleFile = useCallback((file: File) => {
     const ok = ACCEPTED.some((ext) => file.name.toLowerCase().endsWith(ext));
